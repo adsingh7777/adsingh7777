@@ -1,0 +1,147 @@
+***Authenticate Linux with Postgres (authenticate user and password will be stored in databases).*** </br>
+**Task detail**: I have installed Postgres on the podman container, where I have created users table for storing usernames and user passwords for authentication. Now the requirement is to authenticate into the Linux using the user's credentials which are stored in the Postgres Database.
+
+**Environment:**
+PostgreSQL 16.2 running on container
+OS: Ubuntu 20.04.6 LTS
+
+**Supporting links which has been followed for implementation.** </br>
+https://github.com/pam-pgsql/pam-pgsql </br>
+https://freebsd-questions.freebsd.narkive.com/MbH846wT/sshd-pam-pgsql </br>
+https://www.postgresql.org/message-id/1036143319.1174.39.camel@madness.tr.net </br>
+
+
+**Installed PAM modules for PGSQL authentication.** </br>
+==> sudo apt install libpam-pgsql libnss-pgsql2 
+
+Below are the steps which I have followed.
+
+==> Implemented the below changes into the  /etc/pam_pgsql.conf configuration.
+
+================
+# cat /etc/pam_pgsql.conf
+host = 192.168.122.1
+database = auth
+password = redhat
+user = postgres
+table = userdb_passwd
+user_column = username
+pwd_column = passwd
+expired_column = expired
+newtok_column = newtok
+pw_type = clear
+debug = 1
+================
+
+==> added the below lines in /etc/pam.d/common-auth .
+
+===========
+auth    required                        /usr/local/lib/security/pam_pgsql.so debug
+account     required                    /usr/local/lib/security/pam_pgsql.so debug
+#password     required                  /usr/lib/x86_64-linux-gnu/security/pam_cracklib.so debug
+password     required                   /usr/local/lib/security/pam_pgsql.so authok echo_pass debug
+session     required                    /usr/local/lib/security/pam_pgsql.so debug
+===========
+
+Additionally, i have configured NSS with PostgreSQL so that the users stored in the Postgres table could act as standard Unix users and can connect through SSH.
+Below are the configuration for NSS which we have done.
+
+==> Install debian packages
+# apt-get install libnss-pgsql2
+
+==> Created the  /etc/nss-pgsql.conf file which references the postgres database.
+===================
+root@vpn:/home/vm# cat /etc/nss-pgsql.conf
+connectionstring        = hostaddr=192.168.122.1 dbname=auth user=postgres password=redhat connect_timeout=1  
+getpwnam        = SELECT p.username, p.passwd, p.username, p.homedir, p.shell, p.uid, p.gid FROM userdb_passwd p WHERE p.username = $1
+getpwuid        = SELECT p.username, p.passwd, p.username, p.homedir, p.shell, p.uid, p.gid FROM userdb_passwd p WHERE p.uid = $1
+allusers        = SELECT p.username, p.passwd, p.username, p.homedir, p.shell, p.uid, p.gid FROM userdb_passwd p
+getgrnam        = SELECT g.groupname, 'x' AS passwd, g.gid, ARRAY(SELECT p.username FROM userdb_passwd p INNER JOIN userdb_user_group ug ON ug.uid=p.uid WHERE ug.gid = g.gid) AS members FROM userdb_groups g WHERE g.groupname = $1
+getgrgid        = SELECT g.groupname, 'x' AS passwd, g.gid, ARRAY(SELECT p.username FROM userdb_passwd p INNER JOIN userdb_user_group ug ON ug.uid=p.uid WHERE ug.gid = g.gid) AS members FROM userdb_groups g WHERE g.gid = $1
+allgroups       = SELECT g.groupname, 'x' AS passwd, g.gid, ARRAY(SELECT p.username FROM userdb_passwd p INNER JOIN userdb_user_group ug ON ug.uid=p.uid WHERE ug.gid = g.gid) AS members FROM userdb_groups g
+getgroupmembersbygid    = SELECT p.username FROM userdb_passwd p INNER JOIN userdb_user_group ug ON ug.uid=p.uid WHERE ug.gid = $1
+groups_dyn      = SELECT ug.gid FROM userdb_user_group ug INNER JOIN userdb_passwd p ON p.uid=ug.uid WHERE p.username = $1 AND $2 = $2
+===================
+
+
+This requires three tables: userdb_passwd, userdb_groups, and userdb_user_group
+
+==============================
+    -- sequences, to deal with the userid and groupids
+CREATE SEQUENCE group_id MINVALUE 10000 MAXVALUE 2147483647 NO CYCLE;
+CREATE SEQUENCE user_id MINVALUE 10000 MAXVALUE 2147483647 NO CYCLE;
+
+-- group table - all groups
+CREATE TABLE "userdb_groups" (
+    "gid" int4 NOT NULL DEFAULT nextval('group_id'),
+    "groupname" character varying(16) NOT NULL,
+    "descr" character varying,
+    "passwd" character varying(20),
+    PRIMARY KEY ("gid")
+);
+
+-- passwd entry tables - the passwd field is unused because of PAM against userdb_users
+CREATE TABLE "userdb_passwd" (
+    "username" character varying(64) NOT NULL,
+    "passwd" character varying(128) NOT NULL,
+    "uid" int4 NOT NULL DEFAULT nextval('user_id'),
+    "gid" int4 NOT NULL,
+    "gecos" character varying(128),
+    "homedir" character varying(256) NOT NULL,
+    "shell" character varying DEFAULT '/bin/bash' NOT NULL,
+    "expired" BOOLEAN NOT NULL,
+    "newtok" BOOLEAN NOT NULL,
+    PRIMARY KEY ("username")
+);
+CREATE UNIQUE INDEX passwd_table_uid ON userdb_passwd USING btree (uid);
+
+CREATE TABLE "userdb_user_group" (
+    "gid" int4 NOT NULL,
+    "uid" int4 NOT NULL,
+    PRIMARY KEY ("gid", "uid"),
+    CONSTRAINT "ug_gid_fkey" FOREIGN KEY ("gid") REFERENCES "userdb_groups"("gid"),
+    CONSTRAINT "ug_uid_fkey" FOREIGN KEY ("uid") REFERENCES "userdb_passwd"("uid")
+);
+==============================
+
+==> After creating the above tables we have added the data as shown as below.
+=============
+auth=# select * from userdb_passwd ;
+username |  passwd   |  uid  |  gid  | gecos |   homedir   |   shell   | expired | newtok  
+----------+-----------+-------+-------+-------+-------------+-----------+---------+--------
+users    | password3 | 10002 | 10002 | users | /home/users | /bin/bash | f       | f
+admin    | password1 | 10000 | 10000 | admin | /home/admin | /bin/bash | f       | f
+staff    | password2 | 10001 | 10001 | staff | /home/staff | /bin/bash | f       | f
+vm       | password1 | 10003 | 10003 | vm    | /home/vm    | /bin/bash | f       | f
+(4 rows)
+
+auth=# select * from userdb_groups ;
+ gid  | groupname |     descr      |     passwd      
+-------+-----------+----------------+----------------
+10000 | admin     | Administrators | admin_password
+10001 | staff     | Staff Members  | staff_password
+10002 | users     | Regular Users  | user_password
+(3 rows)
+
+auth=# select * from userdb_user_group ;
+ gid  |  uid   
+-------+-------
+10000 | 10000
+10001 | 10001
+10002 | 10002
+(3 rows)
+
+auth=#
+
+=============
+
+==> Done below changes in  /etc/nsswitch.conf so that the  name service switch to start looking to pgsql for account information.
+
+===========
+passwd:         files systemd pgsql
+group:          files systemd pgsql
+shadow:         files pgsql
+
+===========
+
+After doing the above steps the issue got resolved now we can ssh and switch users using the user's creds which are stored in the postgress db.
