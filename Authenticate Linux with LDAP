@@ -1,0 +1,147 @@
+Authenticate Linux with LDAP [Lightweight Directory Access Protocol].
+
+Reference link :-
+https://ubuntu.com/server/docs/service-ldap
+https://www.linux.com/topic/desktop/how-authenticate-linux-desktop-your-openldap-server/
+
+LDAP Basic Terminology
+Before we start our own LDAP server understanding following terminologies would be helpful:
+
+DN (Distinguished name) : Distinguished name uniquely idenfies each entity within LDAP. It is basically the path traversal from root the end entity. Example of a rishabh user DN : cn=rishabh,ou=Users,dc=example,dc=org
+o: Organization Name.
+dc: Domain Component. For example, you can write keenable.com like this dc=keenable,dc=com.
+LDAP Domain : It is the root directory of an Organization. Example Domain : dc=example,dc=org
+Base DN : When searching for any specific entity within LDAP, Base DN is the starting point to start the entity search. Example Base DN to lookup users could be like : ou=Users,dc=example,dc=org
+Bind DN : To perform any lookup, insertion, modification within LDAP we need to first authenticate ourselves within LDAP. Bind DN is the entity which can be used to authenticate with LDAP and has the required roles to perform any specific task within LDAP. Example Bind DN would be like following : cn=admin,dc=example,dc=org
+LDIF (LDAP Data Interchange Format) : ldif file is a plain text file which contain the entities as set of records. We can create our own reusable ldif file which can be imported into an empty ldap server.
+
+==> Install OpenLdap server using podman 
+
+podman run -itd -e LDAP_ORGANISATION="My Company" -e LDAP_DOMAIN="my-company.com" -p 389:389 -p 636:636 -e LDAP_ADMIN_PASSWORD="admin@123" --name openldap -itd docker.io/osixia/openldap:1.5.0 
+
+==> For adding the users and group using the .ldif file
+ldapadd -D "cn=admin,dc=my-company,dc=com" -w admin@123 -f add_content.ldif
+============================
+└─$ cat add_content.ldif              
+dn: ou=People,dc=my-company,dc=com
+objectClass: organizationalUnit
+ou: People
+
+dn: ou=Groups,dc=my-company,dc=com
+objectClass: organizationalUnit
+ou: Groups
+
+dn: cn=keenable,ou=Groups,dc=my-company,dc=com
+objectClass: posixGroup
+cn: keenable
+gidNumber: 7000
+
+dn: uid=amandeep,ou=people,dc=my-company,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: amandeep
+sn: singh
+givenName: amandeep
+cn: amandeep singh
+displayName: amandeep singh
+uidNumber: 70000
+gidNumber: 7000
+userPassword: abc@123
+gecos: amandeep singh
+loginShell: /bin/bash
+homeDirectory: /home/amandeep
+
+=========================
+==> To verify user is created use below command
+ldapsearch -x -LLL -H ldap://localhost -b dc=my-company,dc=com '(uid=amandeep)' cn gidNumber  -D "cn=admin,dc=my-company,dc=com" -w admin@123
+
+==> list all the entries 
+ldapsearch -x -H ldap://localhost -b dc=my-company,dc=com -D "cn=admin,dc=my-company,dc=com" -w admin@123
+
+==> change passwd for ldap user
+ ldappasswd -H ldap://my-company.com -x -D "cn=admin,dc=my-company,dc=com" -W -S "uid=john,ou=people,dc=my-company,dc=com"
+ 
+ 
+root@28112c42bbae:/etc# ldapwhoami -x -D cn=admin,dc=my-company,dc=com -W
+Enter LDAP Password: 
+dn:cn=admin,dc=my-company,dc=com
+
+#######################################################################################################################################################################################
+Implementation for the LDAP client side
+
+Reference link ==>  https://www.linux.com/topic/desktop/how-authenticate-linux-desktop-your-openldap-server/
+
+
+==> Installation
+sudo apt-get install libnss-ldap libpam-ldap ldap-utils nscd -y
+
+During the installation, the system will ask to enter the LDAP server URI and DN configurations.
+
+
+==> configure nsswitch
+
+vim /etc/nsswitch.conf
+
+# /etc/nsswitch.conf
+#
+# Example configuration of GNU Name Service Switch functionality.
+# If you have the `glibc-doc-reference' and `info' packages installed, try:
+# `info libc "Name Service Switch"' for information about this file.
+
+passwd:         files systemd ldap 
+group:          files systemd ldap 
+shadow:         files ldap 
+gshadow:        files
+
+==>configure PAM for LDAP authentication
+
+# vim  /etc/pam.d/common-password
+
+Remove use_authtok from the following line:
+password [success=1 user_unknown=ignore default=die] pam_ldap.so use_authtok try_first_pass
+
+# vim /etc/pam.d/common-session
+
+At the end of that file, add the following:
+session optional pam_mkhomedir.so skel=/etc/skel umask=077
+
+==> verify the /etc/ldap.conf file it should be look like below 
+
+root@vpn:/home/vm# cat /etc/ldap.conf |grep -v "#" |grep -v '^[[:space:]]*$'
+base dc=my-company,dc=com
+TLS_REQCERT never
+uri ldap://192.168.122.1:389
+ldap_version 3
+rootbinddn cn=admin,dc=my-company,dc=com
+loglevel 256
+pam_password md5
+
+
+==> now reboot the system or restart the nscd service (systemctl restart nscd )
+==> After rebooting the system we should be able to get ldap users delatails using below command
+
+# getent passwd <user name>
+# getent group <group name>
+# id <user name>
+
+for example:-
+=======================
+root@vpn:/home/vm# getent passwd amandeep
+amandeep:x:70000:7000:amandeep singh:/home/amandeep:/bin/bash
+root@vpn:/home/vm# getent group keenable
+keenable:*:7000:
+root@vpn:/home/vm# id amandeep
+uid=70000(amandeep) gid=7000(keenable) groups=7000(keenable)
+root@vpn:/home/vm# 
+=======================
+
+==> After verifying the above details we should be able to authenticate using the ldap users.
+========================
+for example:- 
+/home/vm# ssh amandeep@localhost
+amandeep@localhost's password: 
+Welcome to Ubuntu 22.04.4 LTS (GNU/Linux 6.5.0-18-generic x86_64)
+Last login: Fri Feb 23 17:57:34 2024 from 127.0.0.1
+amandeep@vpn:~$ 
+========================
