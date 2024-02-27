@@ -1,0 +1,139 @@
+Task Details:- LDAP Authentication using FreeRADIUS
+
+freeradius [Remote Authentication Dial-in User Service (RADIUS) server]
+
+Reference Link :- https://medium.com/btech-engineering/ldap-authentication-using-freeradius-4546c022ba16
+Reference Link :-https://www.golinuxcloud.com/freeradius-ldap-authentication-authorization/
+
+Overview:-  When one of the users login to the router (NAS), a RADIUS request will be created and sent to the FreeRADIUS server. Then the RADIUS server will query the LDAP (Lightweight Directory Access Protocol) server if this user is existed and has the right credentials.
+
+Authentication:- Authentication service is used to confirm a user identity. When the user attempts to access a network or another resource, Network Access Server (NAS) creates an “Access-Request” packet and sends it to the RADIUS server, asking if that user’s credentials are valid or not.  Following shows a truncated “Access-Request” packet in Wireshark.
+
+
+“Access-Accept”: Once the user gets authenticated which means the credentials are valid, the RADIUS server sends an “Access-Accept” packet to inform the NAS to grant access to the client. The response packet may also contain authorization information in the attributes. Following Wireshark packet shows a truncated “Access-Accept” packet with authorization information in the vendor specific attribute.
+
+“Access-Reject”: When the authentication fails, the RADIUS server denies access to all requested network resources by sending an “Access-Reject”. Following shows a truncated “Access-Reject” packet in Wireshark.
+
+“Access-Challenge”: The RADIUS server may need the client to send extra information like secondary password, PIN, token, or card. It sends an “Access-Challenge” packet with these parameters. The packet is also sent when the RADIUS server desires to use a complex authentication mechanism like Extensible Authentication Protocol (EAP), which has man flavors such as:
+
+PEAP (Protected EAP)
+TLS (Transport Layer Security)
+TTLS (Tunneled TLS)
+
+
+Steps to be followed for freeradius :-
+### Configure freeradius server
+
+Step 1:-  Install and setup freeradius and freeradius-ldap
+=> sudo apt update
+=> sudo apt install freeradius freeradius-ldap
+
+Step 2:- FreeRADIUS comes with a lot of modules and configuration files. We will not use all the files and modules.The virtual server files which are stored under "/etc/freeradius/3.0/sites-enabled" directory. Two virtual servers are configured in default when you install a FreeRADIUS server.
+=====================
+root@freeradius:/home/vm# ls -l /etc/freeradius/3.0/sites-enabled/
+total 0
+lrwxrwxrwx 1 freerad freerad 26 Şub 16 14:36 default -> ../sites-available/default
+lrwxrwxrwx 1 freerad freerad 31 Şub 16 14:36 inner-tunnel -> ../sites-available/inner-tunnel
+root@freeradius:/home/vm#
+=====================
+
+Step 3:- Take backup of the existing virtual servers files.
+====================
+root@freeradius:/home/vm# mkdir backup
+root@freeradius:/home/vm# mv /etc/freeradius/3.0/sites-enabled/default  /home/vm/backup/
+root@freeradius:/home/vm# mv /etc/freeradius/3.0/sites-enabled/inner-tunnel  /home/vm/backup/
+====================
+
+Step 4:-  Create a new virtual server 
+
+===================
+root@freeradius:/home/vm# nano /etc/freeradius/3.0/sites-enabled/my_server
+
+Then add the lines below.
+
+server my_server {
+  listen {
+        type = auth
+        ipaddr = *
+        port = 1812
+  }
+  authorize {
+        ldap
+        if (ok || updated)  {
+           update control {
+             Auth-Type := ldap
+           }
+        }
+  }
+  authenticate {
+        Auth-Type LDAP {
+                ldap
+        }
+  }
+}
+===================
+
+Step 5:-  FreeRADIUS runs the modules in "/etc/freeradius/3.0/mods-enabled/" directory. We need to copy ldap module to that directory. Do it as below.
+
+===================
+root@freeradius:/home/celal# cp /etc/freeradius/3.0/mods-available/ldap /etc/freeradius/3.0/mods-enabled/
+===================
+
+Step 6:-  Open ldap module in /etc/freeradius/3.0/mods-enabled/ldap and add below lines in your config
+
+==================
+ldap {
+   server = '192.168.122.1'
+   base_dn = 'dc=my-company,dc=com'
+   identity = 'cn=admin,dc=my-company,dc=com'
+   port = 389
+   password = 'admin@123'
+   }
+==================
+
+
+Step 7 :- Define a RADIUS client with IP address and shared secret in /etc/freeradius/3.0/clients.conf file
+===================
+cat /etc/freeradius/3.0/clients.conf
+client freeradius-client {
+       ipaddr = 192.168.122.1
+       secret = StrongSecret
+}
+==================
+
+Step 8 :- Now start the FreeRADIUS server on full debugging.
+
+freeradius -X
+
+
+Step 9 :- Now test the freeradius server using ldap authentication
+
+==================
+radtest {user-ldap} {password-user-ldap} (IP-Server ldap} 1812 {shared-secret}
+radtest amandeep abc@123 192.168.122.1 1812 StrongSecret
+==================
+
+# If connection successfuly we will get the below response
+=================
+Sent Access-Request Id 186 from 0.0.0.0:e218 to 192.168.122.30:1812 length 78
+	User-Name = "amandeep"
+	User-Password = "abc@123"
+	NAS-IP-Address = 127.0.1.1
+	NAS-Port = 1812
+	Message-Authenticator = 0x00
+	Cleartext-Password = "abc@123"
+Received Access-Accept Id 186 from 192.168.122.30:714 to 192.168.122.1:57880 length 20
+=================
+# If we pass wrong password for the ldap user we will get below reponse code
+
+=================
+Sent Access-Request Id 89 from 0.0.0.0:8629 to 192.168.122.30:1812 length 78
+	User-Name = "amandeep"
+	User-Password = "abc@1233"
+	NAS-IP-Address = 127.0.1.1
+	NAS-Port = 1812
+	Message-Authenticator = 0x00
+	Cleartext-Password = "abc@1233"
+Received Access-Reject Id 89 from 192.168.122.30:714 to 192.168.122.1:34345 length 20
+(0) -: Expected Access-Accept got Access-Reject
+=================
