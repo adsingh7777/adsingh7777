@@ -1,0 +1,42 @@
+**Authenticate Linux with FreeRadius**
+
+To setup the Authentication against FreeRadius follow the following steps.
+
+Step 1:- Clone the following repo for Pam module for freeRadius
+https://github.com/FreeRADIUS/pam_radius.git
+
+git clone https://github.com/FreeRADIUS/pam_radius.git
+
+Step 2:- for Debian/Ubuntu distro run the following command
+
+$ ./configure
+$ make deb
+
+The above command will build the code and output the debian package for installing the libpam-radius-auth 
+$ dpkg -i ../libpam-radius-auth_2.0.1_amd64.deb
+
+Step 3:- After installing the package move the pam_radius_auth.so file to the /usr/lib/x86_64-linux-gnu/security/ location
+
+Step 4:- Configure the /etc/pam_radius_auth.conf file for pam authentication as followed
+
+-----------------
+# server[:port]             shared_secret      timeout (s)  source_ip            vrf
+127.0.0.1:1812                   testing             3
+
+-----------------
+
+
+Step 4 :- SSH server configuration
+To authenticate the SSH server request from radius server, edit the file /etc/pam.d/sshd.  Add a new line
+auth                       sufficient                             pam_radius_auth.so
+above the following line
+auth                       include                                 system-auth
+
+
+Step 5:- Password change configuration
+Similarly, to change the password of any SSH user, change the file /etc/pam.d/passwd. Add a new line
+password                            sufficient                             pam_radius_auth.so
+above the following line
+password                            include                 system-auth
+
+Step 6:- After doing the above changes user will be able to authenticate into linux server using freeradius client. 
