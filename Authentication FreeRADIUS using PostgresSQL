@@ -1,0 +1,86 @@
+Authentication FreeRADIUS using PostgresSQL
+
+Below document is to setup the FreeRadius Authentication using PostgresSQL as a backend database.
+
+
+===> Install FreeRadius 3.0 PostgreSQL
+
+# sudo apt update && upgrade -y
+# sudo apt install freeradius freeradius-utils freeradius-postgresql
+
+===> Enable SQL Connection
+
+# sudo cd /etc/freeradius/3.0/mods-enabled
+# sudo ln -s ../mods-available/sql sql
+
+===> Delete -sql and #sql code on sites default
+
+# sudo nano /etc/freeradius/3.0/sites-available/default
+
+===> Delete -sql and #sql code on sites inner-tunnel
+
+# sudo nano /etc/freeradius/3.0/sites-available/inner-tunnel
+
+===> Create and Import Schema
+
+# sudo -u postgres psql -c "CREATE DATABASE radius;"
+# sudo -u postgres psql radius < /etc/freeradius/3.0/mods-config/sql/main/postgresql/schema.sql
+
+===> Edit FreeRadius connection
+
+# sudo nano /etc/freeradius/3.0/mods-available/sql
+---------------------
+driver = "rlm_sql_postgresql"
+dialect = "postgresql"
+server = "localhost"
+port = 5432
+login = "radius"
+password = "radpass"
+radius_db = "radius"
+read_clients = yes
+client_table = "nas"
+--------------------
+
+===> Now start the freeRadius server on dibugginf mode
+# freeradius -X
+
+===> Now insert some sample data in Postgres as shown as below.
+
+INSERT INTO radcheck VALUES (1, 'demo', 'Cleartext-Password', ':=', '12345');
+INSERT INTO radcheck VALUES (2, 'test', 'Cleartext-Password', ':=', '54321');
+
+===> Now test the freeRedis authentication using below command.
+radtest demo 12345 localhost 10 testing123
+
+sample output with correct creds
+--------------------
+root@vpn:/etc/freeradius/3.0# radtest demo 12345 localhost 10 testing
+Sent Access-Request Id 104 from 0.0.0.0:49131 to 127.0.0.1:1812 length 74
+	User-Name = "demo"
+	User-Password = "12345"
+	NAS-IP-Address = 127.0.1.1
+	NAS-Port = 10
+	Message-Authenticator = 0x00
+	Cleartext-Password = "12345"
+Received Access-Accept Id 104 from 127.0.0.1:1812 to 127.0.0.1:49131 length 20
+
+--------------------
+
+sample output with wrong user creds
+
+-------------------
+root@vpn:/etc/freeradius/3.0# radtest demo 1234 localhost 10 testing
+Sent Access-Request Id 150 from 0.0.0.0:60616 to 127.0.0.1:1812 length 74
+	User-Name = "demo"
+	User-Password = "1234"
+	NAS-IP-Address = 127.0.1.1
+	NAS-Port = 10
+	Message-Authenticator = 0x00
+	Cleartext-Password = "1234"
+Received Access-Reject Id 150 from 127.0.0.1:1812 to 127.0.0.1:60616 length 20
+(0) -: Expected Access-Accept got Access-Reject
+
+-------------------
+
+====> Now as we have already configured the freeRadus pam module for authenticate freeRadius users to linus ,we will test using ssh command.
+
