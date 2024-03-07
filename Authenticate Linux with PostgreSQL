@@ -9,6 +9,7 @@ OS: Ubuntu 20.04.6 LTS
 https://github.com/pam-pgsql/pam-pgsql </br>
 https://freebsd-questions.freebsd.narkive.com/MbH846wT/sshd-pam-pgsql </br>
 https://www.postgresql.org/message-id/1036143319.1174.39.camel@madness.tr.net </br>
+https://www.vhffs.org/doc:installationguide:basic-nss
 
 
 **Installed PAM modules for PGSQL authentication.** </br>
