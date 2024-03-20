@@ -1,5 +1,6 @@
 # Java Program to play Sa RE GA MA PA DA NI SA from laptop keyboard.
-```import javax.sound.midi.*;
+```
+import javax.sound.midi.*;
 
 public class Piano {
     public static void main(String[] args) {
